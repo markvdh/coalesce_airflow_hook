@@ -11,7 +11,7 @@ Features:
 - Prevent overloading the Coalesce API
 - Uses Snowflake connection defined in Airflow (supports OAuth, KeyPair and basic auth)
 
-Date: Nov 26, 2024
+Date: Nov 28, 2024
 
 """
 
@@ -22,34 +22,9 @@ from requests.exceptions import HTTPError
 from airflow.providers.http.hooks.http import HttpHook
 from airflow.exceptions import AirflowException
 
-# Start configuration
-
-# Base URL - change this to include specific clusters, subdomain, etc.
-BASE_URL = "https://app.coalescesoftware.io"
-
-# API endpoint URL templates - usually don't need changing
-GETRUN_ENDPOINT         = BASE_URL + "/api/v1/runs/{runID}"
-LISTRUNRESULTS_ENDPOINT = BASE_URL + "/api/v1/runs/{runID}/results"
-LISTNODES_ENDPOINT      = BASE_URL + "/api/v1/environments/{envID}/nodes"
-GETNODE_ENDPOINT        = BASE_URL + "/api/v1/environments/{envID}/nodes/{nodeID}"
-STARTRUN_ENDPOINT       = BASE_URL + "/scheduler/startRun"
-RERUN_ENDPOINT          = BASE_URL + "/scheduler/rerun"
-
-# End configuration
-
 logger = logging.getLogger(__name__)
 
 def make_request(url, headers, data=None, method="GET", sleep_time=0.0, max_attempts=1, timeout=3600.00):
-    """
-    Make requests to any API with an automatic retry and rate limit mechanism.
-
-    Raises:
-        HTTPError Exception: If response status code!= 200.
-
-    Returns:
-        Response: The response from the API call.
-    """
-    # API is rate-limited, adjust the sleep time based on the rate limit of the API you are calling
     time.sleep(sleep_time)
 
     if method not in ["POST", "PATCH", "PUT", "GET", "DELETE"]:
@@ -76,37 +51,41 @@ def make_request(url, headers, data=None, method="GET", sleep_time=0.0, max_atte
                 raise e
 
 class coalesce_hook(HttpHook):
-    """
-    Make Reliable API Calls to Coalesce
-    :param conn_id: ID of your airflow connection, containing
-        Coalesce token in the 'password' field, and 'https' in the 'schema' field
-    :type conn_id: str
-    """
+    conn_name_attr = "conn_id"
+    default_conn_name = "coalesce_default"
+    default_sf_conn = "OAuth"
+    conn_type = "http"
+    hook_name = "Coalesce"
 
-    def __init__(self, conn_id=None, sf_conn_id="OAuth", *args, **kwargs):
+    def __init__(
+        self, conn_id: str = default_conn_name, sf_conn_id: str = default_sf_conn, *args, **kwargs
+    ) -> None:
+        super().__init__(*args, **kwargs)
         self.conn_id = conn_id
         self.sf_conn_id = sf_conn_id
+        self.get_conn()
+    
+    def get_conn(self):
+        try:
+            conn = HttpHook.get_connection(self.conn_id)
+        except Exception as e:
+            raise AirflowException(
+                f"Error fetching Coalesce connection details for {self.conn_id}: {e}"
+            )
+    
+        self.host = conn.host or "https://app.coalescesoftware.io"
         self.headers = {
-            "Authorization": f"Bearer {self._get_coalesce_token()}",
+            "Authorization": f"Bearer {conn.password}",
             "Accept": "application/json",
             "Content-Type": "application/json"
         }
+        self.GETRUN_ENDPOINT         = self.host + "/api/v1/runs/{runID}"
+        self.LISTRUNRESULTS_ENDPOINT = self.host + "/api/v1/runs/{runID}/results"
+        self.LISTNODES_ENDPOINT      = self.host + "/api/v1/environments/{envID}/nodes"
+        self.GETNODE_ENDPOINT        = self.host + "/api/v1/environments/{envID}/nodes/{nodeID}"
+        self.STARTRUN_ENDPOINT       = self.host + "/scheduler/startRun"
+        self.RERUN_ENDPOINT          = self.host + "/scheduler/rerun"
 
-    def _get_coalesce_token(self):
-        """
-        Get Coalesce token from connection id.
-        Raises:
-            AirflowException: If there is no valid token or conn_id supplied.
-        Returns:
-            str: The Coalesce token.
-        """
-        try:
-            return HttpHook.get_connection(self.conn_id).password
-        except Exception as e:
-            raise AirflowException(
-                f"Error fetching connection details for {self.conn_id}: {e}"
-            )
-    
     def _get_snowflake_credentials(self):
         # Initialize an empty dictionary to hold the credentials
         credentials = {}
@@ -151,16 +130,16 @@ class coalesce_hook(HttpHook):
         return credentials
 
     def apiGetRun(self, run_id):
-        return make_request(method="GET", url=GETRUN_ENDPOINT.format(runID=run_id), headers=self.headers, sleep_time=0.5, max_attempts=3, timeout=60)
+        return make_request(method="GET", url=self.GETRUN_ENDPOINT.format(runID=run_id), headers=self.headers, sleep_time=0.5, max_attempts=3, timeout=60)
 
     def apiListRunResults(self, run_id):
-        return make_request(method="GET", url=LISTRUNRESULTS_ENDPOINT.format(runID=run_id), headers=self.headers, sleep_time=0.5, max_attempts=3, timeout=60)
+        return make_request(method="GET", url=self.LISTRUNRESULTS_ENDPOINT.format(runID=run_id), headers=self.headers, sleep_time=0.5, max_attempts=3, timeout=60)
 
     def apiListNodes(self, env_id):
-        return make_request(method="GET", url=LISTNODES_ENDPOINT.format(envID=env_id), headers=self.headers, sleep_time=0.5, max_attempts=3, timeout=60)
+        return make_request(method="GET", url=self.LISTNODES_ENDPOINT.format(envID=env_id), headers=self.headers, sleep_time=0.5, max_attempts=3, timeout=60)
 
     def apiGetNode(self, env_id, node_id):
-        return make_request(method="GET", url=GETNODE_ENDPOINT.format(envID=env_id, nodeID=node_id), headers=self.headers, sleep_time=0.1, max_attempts=3, timeout=60)
+        return make_request(method="GET", url=self.GETNODE_ENDPOINT.format(envID=env_id, nodeID=node_id), headers=self.headers, sleep_time=0.1, max_attempts=3, timeout=60)
 
     def apiStartRun(self, env_id, job_id=None):
         payload = {
@@ -175,7 +154,7 @@ class coalesce_hook(HttpHook):
 
         logger.info(f"Using {payload['userCredentials']['snowflakeAuthType']} authentication for Snowflake")
 
-        return make_request(method="POST", url=STARTRUN_ENDPOINT, headers=self.headers, sleep_time=0.5, data=json.dumps(payload))
+        return make_request(method="POST", url=self.STARTRUN_ENDPOINT, headers=self.headers, sleep_time=0.5, data=json.dumps(payload))
     
     def apiRerun(self, run_id):
         payload = {
@@ -185,7 +164,7 @@ class coalesce_hook(HttpHook):
             "userCredentials": self._get_snowflake_credentials()
         }
 
-        return make_request(method="POST", url=RERUN_ENDPOINT, headers=self.headers, sleep_time=0.5, data=json.dumps(payload))
+        return make_request(method="POST", url=self.RERUN_ENDPOINT, headers=self.headers, sleep_time=0.5, data=json.dumps(payload))
         
     def startRun(self, env_id, job_id, offline_mode = False, retries=3, delay=30):
         runStart = self.apiStartRun(env_id, job_id)
