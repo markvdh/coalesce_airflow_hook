@@ -50,7 +50,7 @@ def make_request(url, headers, data=None, method="GET", sleep_time=0.0, max_atte
             else:
                 raise e
 
-class coalesce_hook(HttpHook):
+class CoalesceHook(HttpHook):
     conn_name_attr = "conn_id"
     default_conn_name = "coalesce_default"
     default_sf_conn = "OAuth"

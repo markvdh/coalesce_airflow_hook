@@ -1,14 +1,14 @@
 from airflow import DAG
 from datetime import datetime, timedelta
 from airflow.operators.python import PythonOperator
-from hooks import coalesce_hook
+from hooks import CoalesceHook
 
 def start_coalesce_job(env_id,job_id):
     # initialize the Coalesce hook with 2 parameters:
     # 1 = Coalesce connection (should have the token in the password field)
     # 2 = the Snowflake connection, or "OAuth" for OAuth
     #    hook = CoalesceAPI("coalesce_default","OAuth")
-    hook = coalesce_hook("coalesce_default","snowflake_default")
+    hook = CoalesceHook("coalesce_default","snowflake_default")
     hook.startRun(env_id, job_id)
 
 default_args = {
